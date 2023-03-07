@@ -16,7 +16,7 @@ local ignorePlys        = GetConVar( "ai_ignoreplayers" )
 -- Permanent Friend Profile Setting
 LambdaCreateProfileSetting( "DTextEntry", "l_permafriends", "Friend System", function( pnl, parent )
     pnl:SetZPos( 100 ) -- ZPos is important for the order
-    local lbl = LAMBDAPANELS:CreateLabel( "[ Permanent Friend ]\nInput a Lambda Name or a Real Player's name to make them this profile's permanent friend. You can seperate names with commas , Example: Eve,Blizz", parent, TOP )
+    local lbl = LAMBDAPANELS:CreateLabel( "[ Permanent Friend ]\nInput a Lambda Name or a Real Player's name to make them this profile's permanent friend. You can seperate names with commas, for example: Eve,Blizz", parent, TOP )
     lbl:SetSize( 100, 100 )
     lbl:Dock( TOP )
     lbl:SetWrap( true )
@@ -41,12 +41,6 @@ if ( SERVER ) then
     util.AddNetworkString( "lambdaplayerfriendsystem_addfriend" )
     util.AddNetworkString( "lambdaplayerfriendsystem_removefriend" )
 
-    local function GetPlayerByName( name )
-        for _, v in ipairs( player_GetAll() ) do
-            if string_lower( v:Nick() ) == string_lower( name ) then return v end
-        end
-    end
-
     -- If Lambda is currently friends with that entity
     local function IsLambdaFriendsWith( lambda, ent )
         return ( IsValid( ent ) and IsValid( lambda.l_friends[ ent:GetCreationID() ] ) )
@@ -62,7 +56,6 @@ if ( SERVER ) then
 
     -- Become friends with that entity and add us to friend list
     local function LambdaAddFriend( lambda, ent, forceAdd )
-        print( ent, ent.l_friends )
         if lambda:IsFriendsWith( ent ) or !lambda:CanBeFriendsWith( ent ) and !forceAdd or !friendsEnabled:GetBool() then return end
         ent.l_friends = ent.l_friends or {}
 
@@ -135,6 +128,13 @@ if ( SERVER ) then
         end
     end
 
+    -- Small helper function
+    local function GetPlayerByName( name )
+        for _, v in ipairs( player_GetAll() ) do
+            if string_lower( v:Nick() ) == string_lower( name ) then return v end
+        end
+    end
+
     -- Set up profile's permanent friends
     local function HandleProfiles( self, info )
         local permafriendsstring = self.l_permafriends
@@ -165,7 +165,7 @@ if ( SERVER ) then
         -- Debug lines that visualizes friends
         if dev:GetBool() then
             for _, v in pairs( self.l_friends ) do
-                debugoverlay.Line( self:WorldSpaceCenter(), v:WorldSpaceCenter(), 0, self:GetPlyColor():ToColor(), false )
+                debugoverlay.Line( self:WorldSpaceCenter(), v:WorldSpaceCenter(), 0, self:GetPlyColor():ToColor(), true )
             end
         end
 
