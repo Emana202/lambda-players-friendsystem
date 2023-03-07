@@ -1,187 +1,19 @@
 local IsValid = IsValid
-local table_Count = table.Count
-local pairs = pairs
-local RandomPairs = RandomPairs
-local random = math.random
-local table_Add = table.Add
-local VectorRand = VectorRand
 local net = net
-local string_find = string.find
-local string_Explode = string.Explode
-local player_GetAll = player.GetAll
-local string_lower = string.lower
-local table_IsEmpty = table.IsEmpty
-local debugoverlay = debugoverlay
-local dev = GetConVar( "developer" )
-local uiscale = GetConVar( "lambdaplayers_uiscale" )
+local pairs = pairs
+local table_Count = table.Count
+local modulePrefix = "LambdaFriends_"
 
 -- Friend System Convars
+local friendsEnabled    = CreateLambdaConvar( "lambdaplayers_friend_enabled", 1, true, false, false, "Enables the friend system that will allow Lambda Players to be friends with each other or with players and treat them as such", 0, 1, { name = "Enable Friend System", type = "Bool", category = "Friend System" } )
+local drawHalo          = CreateLambdaConvar( "lambdaplayers_friend_drawhalo", 1, true, true, false, "If friends should have a halo around them", 0, 1, { name = "Draw Halos", type = "Bool", category = "Friend System" } )
+local friendCount       = CreateLambdaConvar( "lambdaplayers_friend_friendcount", 3, true, false, false, "How many friends a Lambda/Real Player can have", 1, 30, { name = "Friend Count", type = "Slider", decimals = 0, category = "Friend System" } )
+local friendChance      = CreateLambdaConvar( "lambdaplayers_friend_friendchance", 5, true, false, false, "The chance a Lambda Player will spawn as someone's friend", 1, 100, { name = "Friend Chance", type = "Slider", decimals = 0, category = "Friend System" } )
 
-CreateLambdaConvar( "lambdaplayers_friend_enabled", 1, true, false, false, "Enables the friend system that will allow Lambda Players to be friends with each other or with players and treat them as such", 0, 1, { name = "Enable Friend System", type = "Bool", category = "Friend System" } )
-CreateLambdaConvar( "lambdaplayers_friend_drawhalo", 1, true, true, false, "If friends should have a halo around them", 0, 1, { name = "Draw Halos", type = "Bool", category = "Friend System" } )
-CreateLambdaConvar( "lambdaplayers_friend_friendcount", 3, true, false, false, "How many friends a Lambda/Real Player can have", 1, 30, { name = "Friend Count", type = "Slider", decimals = 0, category = "Friend System" } )
-CreateLambdaConvar( "lambdaplayers_friend_friendchance", 5, true, false, false, "The chance a Lambda Player will spawn as someone's friend", 1, 100, { name = "Friend Chance", type = "Slider", decimals = 0, category = "Friend System" } )
+-- Game Convars
+local ignorePlys        = GetConVar( "ai_ignoreplayers" )
 
-
-
--- Helper function
-local function GetPlayers()
-    local lambda = GetLambdaPlayers()
-    local realplayers = player_GetAll()
-    table_Add( lambda, realplayers )
-    return lambda
-end 
-
-local function Initialize( self, wepent )
-    if CLIENT then return end
-
-    self.l_friends = {}
-    self.l_nearbycheck = CurTime() + 15
-
-    -- If we are friends with ent
-    function self:IsFriendsWith( ent )
-        return IsValid( ent ) and IsValid( self.l_friends[ ent:GetCreationID() ] )
-    end
-
-    -- If we can be friends with ent
-    function self:CanBeFriendsWith( ent )
-        ent.l_friends = ent.l_friends or {}
-        return ( ent.IsLambdaPlayer or ent:IsPlayer() ) and table_Count( self.l_friends ) < GetConVar( "lambdaplayers_friend_friendcount" ):GetInt() and table_Count( ent.l_friends ) < GetConVar( "lambdaplayers_friend_friendcount" ):GetInt() and !self:IsFriendsWith( ent )
-    end
-    
-    -- Return a random friend we have
-    function self:GetRandomFriend()
-        for k, v in RandomPairs( self.l_friends ) do return v end
-    end
-
-    -- Add ent to our friends list
-    function self:AddFriend( ent, forceadd )
-        ent.l_friends = ent.l_friends or {} -- Make sure this table exists
-        if self:IsFriendsWith( ent ) or !self:CanBeFriendsWith( ent ) and !forceadd or !GetConVar( "lambdaplayers_friend_enabled" ):GetBool() then return end
-        
-        self.l_friends[ ent:GetCreationID() ] = ent -- Add ent to our friends list
-        ent.l_friends[ self:GetCreationID() ] = self -- Add ourselves to ent's friends list
-
-        net.Start( "lambdaplayerfriendsystem_addfriend" )
-        net.WriteUInt( self:GetCreationID(), 32 )
-        net.WriteEntity( self )
-        net.WriteEntity( ent )
-        net.Broadcast()
-
-        net.Start( "lambdaplayerfriendsystem_addfriend" )
-        net.WriteUInt( ent:GetCreationID(), 32 )
-        net.WriteEntity( ent )
-        net.WriteEntity( self )
-        net.Broadcast()
-
-        -- Become friends with ent's friends
-        for ID, entfriend in pairs( ent.l_friends ) do
-            if entfriend == self or !self:CanBeFriendsWith( entfriend ) then continue end -- We can't be friends with em
-            entfriend.l_friends = entfriend.l_friends or {}
-
-            net.Start( "lambdaplayerfriendsystem_addfriend" )
-            net.WriteUInt( self:GetCreationID(), 32 )
-            net.WriteEntity( self )
-            net.WriteEntity( entfriend)
-            net.Broadcast()
-
-            net.Start( "lambdaplayerfriendsystem_addfriend" )
-            net.WriteUInt( entfriend:GetCreationID(), 32 )
-            net.WriteEntity( entfriend )
-            net.WriteEntity( self )
-            net.Broadcast()
-
-
-            self.l_friends[ entfriend:GetCreationID() ] = entfriend -- Add entfriend to our friends list
-            entfriend.l_friends[ self:GetCreationID() ] = self -- Add ourselves to entfriend's friends list
-        end
-    end
-    
-    -- Remove ent from our friends list
-    function self:RemoveFriend( ent )
-        if !self:IsFriendsWith( ent ) then return end
-
-        net.Start( "lambdaplayerfriendsystem_removefriend" )
-        net.WriteUInt( self:GetCreationID(), 32 )
-        net.WriteEntity( ent )
-        net.Broadcast()
-
-        net.Start( "lambdaplayerfriendsystem_removefriend" )
-        net.WriteUInt( ent:GetCreationID(), 32 )
-        net.WriteEntity( self )
-        net.Broadcast()
-
-
-        self.l_friends[ ent:GetCreationID() ] = nil -- Remove ent from our friend list
-        ent.l_friends[ self:GetCreationID() ] = nil -- Remove ourselves from ent's friends list
-    end
-
-    -- Randomly set someone as our friend if it passes the chance
-    if random( 0, 100 ) < GetConVar( "lambdaplayers_friend_friendchance" ):GetInt() then
-        for k, v in RandomPairs( GetPlayers() ) do
-            if v == self or self:IsFriendsWith( v ) or !self:CanBeFriendsWith( v ) then continue end
-            self:AddFriend( v )
-            break
-        end
-    end
-
-end
-
-
-local function Think( self, wepent )
-    if CLIENT then return end
-
-    -- Debug lines that visualizes friends
-    if dev:GetBool() then
-        for k, v in pairs( self.l_friends ) do
-            debugoverlay.Line( self:WorldSpaceCenter(), v:WorldSpaceCenter(), 0, self:GetPlyColor():ToColor(), true )
-        end
-    end
-
-    if CurTime() > self.l_nearbycheck then
-
-        if random( 0, 100 ) <= 5 then
-            local nearest = self:GetClosestEntity( nil, 200, function( ent ) return ent.IsLambdaPlayer or ent:IsPlayer() end )
-            if IsValid( nearest ) then self:AddFriend( nearest ) end
-        end
-
-        self.l_nearbycheck = CurTime() + 15
-    end
-
-end
-
--- Prevent damage from friends
-local function OnInjured( self, info )
-    if self:IsFriendsWith( info:GetAttacker() ) then return true end
-end
-
-local function OnMove( self, pos, isonnavmesh )
-    if ( self:GetState() != "Idle" and self:GetState() != "FindTarget" ) or random( 0, 100 ) < 30 then return end
-    local friend = self:GetRandomFriend()
-    
-    if IsValid( friend ) then
-        local navarea = navmesh.GetNavArea( friend:WorldSpaceCenter(), 500 )
-        local pos = IsValid( navarea ) and navarea:GetClosestPointOnArea( friend:GetPos() + VectorRand( -500, 500 ) ) or friend:GetPos() + VectorRand( -500, 500 )
-        self:RecomputePath( pos ) 
-    end
-end
-
--- Defend our friends if we see the attacker
-local function OnOtherInjured( self, victim, info, took )
-    if !took or info:GetAttacker() == self then return end
-
-    if self:IsFriendsWith( victim ) and !LambdaIsValid( self:GetEnemy() ) and self:CanTarget( info:GetAttacker() ) and self:CanSee( info:GetAttacker() ) then 
-        self:AttackTarget( info:GetAttacker() ) 
-    elseif self:IsFriendsWith( info:GetAttacker() ) and !LambdaIsValid( self:GetEnemy() ) and self:CanTarget( victim ) and self:CanSee( victim ) then 
-        self:AttackTarget( victim ) 
-    end
-
-    if victim == self:GetEnemy() and info:GetAttacker() != self and random( 0, 100 ) <= 10  then
-        self:AddFriend( info:GetAttacker() )
-    end
-end
-
-
+-- Permanent Friend Profile Setting
 LambdaCreateProfileSetting( "DTextEntry", "l_permafriends", "Friend System", function( pnl, parent )
     pnl:SetZPos( 100 ) -- ZPos is important for the order
     local lbl = LAMBDAPANELS:CreateLabel( "[ Permanent Friend ]\nInput a Lambda Name or a Real Player's name to make them this profile's permanent friend. You can seperate names with commas , Example: Eve,Blizz", parent, TOP )
@@ -191,88 +23,271 @@ LambdaCreateProfileSetting( "DTextEntry", "l_permafriends", "Friend System", fun
     lbl:SetZPos( 99 )
 end )
 
-
-local function GetPlayerByName( name )
-    for k, v in ipairs( player.GetAll() ) do
-        if string_lower( v:Nick() ) == string_lower( name ) then return v end
-    end
-end
-
-local function HandleProfiles( self, info )
-    local permafriendsstring = self.l_permafriends
-    if !permafriendsstring then return end
-    local names = string_find( permafriendsstring, "," ) and string_Explode( ",", permafriendsstring ) or { permafriendsstring }
-
-    for k, name in ipairs( names ) do
-        local ply = GetPlayerByName( name )
-
-        if IsValid( ply ) then 
-            self:AddFriend( ply, true )
-        else
-            ply = GetLambdaPlayerByName( name )
-            if IsValid( ply ) then self:AddFriend( ply, true ) end
-        end
-    end
-end
-
-local ishealing = {
-    [ "item_healthkit" ] = true,
-    [ "item_healthvial" ] = true,
-    [ "item_battery" ] = true,
-    [ "sent_ball" ] = true
-}
-
-local function OnPickupEnt( self, ent )
-    if ishealing[ ent:GetClass() ] and random( 0, 100 ) <= 5 and ( CurTime() - ent:GetCreationTime() ) < 5 and IsValid( ent:GetCreator() ) then
-        self:AddFriend( ent:GetCreator() )
-    end
-end
-
-hook.Add( "LambdaOnPickupEnt", "lambdafriendsystemonpickupents", OnPickupEnt )
-hook.Add( "LambdaOnProfileApplied", "lambdafriendsystemhandleprofiles", HandleProfiles )
-hook.Add( "LambdaOnBeginMove", "lambdafriendsystemonbeginmove", OnMove )
-hook.Add( "LambdaOnOtherInjured", "lambdafriendsystemonotherinjured", OnOtherInjured )
-hook.Add( "LambdaOnInjured", "lambdafriendsystemoninjured", OnInjured )
-hook.Add( "LambdaOnThink", "lambdafriendsystemthink", Think )
-hook.Add( "LambdaOnInitialize", "lambdafriendsysteminit", Initialize )
-
-if SERVER then
+if ( SERVER ) then
+    
+    local RandomPairs = RandomPairs
+    local table_Add = table.Add
+    local string_find = string.find
+    local string_Explode = string.Explode
+    local ipairs = ipairs
+    local CurTime = CurTime
+    local debugoverlay = debugoverlay
+    local string_lower = string.lower
+    local player_GetAll = player.GetAll
+    local random = math.random
+    local VectorRand = VectorRand
+    local dev = GetConVar( "developer" )
 
     util.AddNetworkString( "lambdaplayerfriendsystem_addfriend" )
     util.AddNetworkString( "lambdaplayerfriendsystem_removefriend" )
 
-    -- Remove our friends
-    local function OnRemove( self )
-        for ID, friend in pairs( self.l_friends ) do
+    local function GetPlayerByName( name )
+        for _, v in ipairs( player_GetAll() ) do
+            if string_lower( v:Nick() ) == string_lower( name ) then return v end
+        end
+    end
+
+    -- If Lambda is currently friends with that entity
+    local function IsLambdaFriendsWith( lambda, ent )
+        return ( IsValid( ent ) and IsValid( lambda.l_friends[ ent:GetCreationID() ] ) )
+    end
+
+    -- If Lambda can become friends with that entity
+    local function LambdaCanBeFriendsWith( lambda, ent )
+        if !ent.IsLambdaPlayer and ( !ent:IsPlayer() or ignorePlys:GetBool() ) then return false end
+        local friendTbl = ent.l_friends
+        local friendLimit = friendCount:GetInt()
+        return ( table_Count( lambda.l_friends ) < friendLimit and ( !friendTbl or table_Count( friendTbl ) < friendLimit ) )
+    end
+
+    -- Become friends with that entity and add us to friend list
+    local function LambdaAddFriend( lambda, ent, forceAdd )
+        print( ent, ent.l_friends )
+        if lambda:IsFriendsWith( ent ) or !lambda:CanBeFriendsWith( ent ) and !forceAdd or !friendsEnabled:GetBool() then return end
+        ent.l_friends = ent.l_friends or {}
+
+        local selfID = lambda:GetCreationID()
+        local entID = ent:GetCreationID()
+
+        lambda.l_friends[ entID ] = ent
+        ent.l_friends[ selfID ] = lambda
+
+        net.Start( "lambdaplayerfriendsystem_addfriend" )
+            net.WriteEntity( lambda )
+            net.WriteEntity( ent )
+            net.WriteUInt( entID, 32 )
+            net.WriteUInt( selfID, 32 )
+        net.Broadcast()
+
+        -- Also become friends with entity's friends
+        for ID, entFriend in pairs( ent.l_friends ) do
+            if entFriend == lambda or !lambda:CanBeFriendsWith( entFriend ) then continue end
+            entID = entFriend:GetCreationID()
+
+            net.Start( "lambdaplayerfriendsystem_addfriend" )
+                net.WriteEntity( lambda )
+                net.WriteEntity( entFriend )
+                net.WriteUInt( entID, 32 )
+                net.WriteUInt( selfID, 32 )
+            net.Broadcast()
+
+            lambda.l_friends[ entID ] = entFriend
+            entFriend.l_friends[ selfID ] = lambda
+        end
+    end
+
+    -- Stop being friends with that entity and remove from the friend list
+    local function LambdaRemoveFriend( lambda, ent )
+        if !lambda:IsFriendsWith( ent ) then return end
+
+        local selfID = lambda:GetCreationID()
+        local entID = ent:GetCreationID()
+
+        net.Start( "lambdaplayerfriendsystem_removefriend" )
+            net.WriteEntity( lambda )
+            net.WriteEntity( ent )
+            net.WriteUInt( selfID, 32 )
+            net.WriteUInt( entID, 32 )
+        net.Broadcast()
+
+        lambda.l_friends[ entID ] = nil
+        ent.l_friends[ selfID ] = LoadNewsList
+    end
+
+    local function OnLambdaInitialized( self, wepent )    
+        self.l_friends = {}
+        self.l_NearbyFriendCheckT = ( CurTime() + 15 )
+    
+        self.IsFriendsWith = IsLambdaFriendsWith
+        self.CanBeFriendsWith = LambdaCanBeFriendsWith
+        self.AddFriend = LambdaAddFriend
+        self.RemoveFriend = LambdaRemoveFriend
+
+        -- Randomly set someone as our friend if it passes the chance
+        if random( 0, 100 ) < friendChance:GetInt() then
+            local allPlys = table_Add( GetLambdaPlayers(), player_GetAll() )
+            for _, v in RandomPairs( allPlys ) do
+                if v != self and self:CanBeFriendsWith( v ) then
+                    self:AddFriend( v )
+                    break
+                end
+            end
+        end
+    end
+
+    -- Set up profile's permanent friends
+    local function HandleProfiles( self, info )
+        local permafriendsstring = self.l_permafriends
+        if !permafriendsstring then return end
+
+        if string_find( permafriendsstring, "," ) then
+            for _, name in ipairs( string_Explode( ",", permafriendsstring ) ) do
+                local ply = GetPlayerByName( name )
+                if IsValid( ply ) then 
+                    self:AddFriend( ply, true )
+                else
+                    ply = GetLambdaPlayerByName( name )
+                    if IsValid( ply ) then self:AddFriend( ply, true ) end
+                end
+            end
+        else
+            local ply = GetPlayerByName( permafriendsstring )
+            if IsValid( ply ) then 
+                self:AddFriend( ply, true )
+            else
+                ply = GetLambdaPlayerByName( permafriendsstring )
+                if IsValid( ply ) then self:AddFriend( ply, true ) end
+            end
+        end
+    end
+
+    local function OnLambdaThink( self, wepent )    
+        -- Debug lines that visualizes friends
+        if dev:GetBool() then
+            for _, v in pairs( self.l_friends ) do
+                debugoverlay.Line( self:WorldSpaceCenter(), v:WorldSpaceCenter(), 0, self:GetPlyColor():ToColor(), false )
+            end
+        end
+
+        -- Become friends with nearby players
+        if CurTime() > self.l_NearbyFriendCheckT then
+            if random( 1, 20 ) == 1 then
+                local nearest = self:GetClosestEntity( nil, 200, function( ent ) return self:CanBeFriendsWith( ent ) end )
+                if IsValid( nearest ) then self:AddFriend( nearest ) end
+            end
+
+            self.l_NearbyFriendCheckT = ( CurTime() + random( 15, 30 ) )
+        end
+    end
+
+    -- Stick with our friends
+    local function OnLambdaBeginMove( self, pos, onNavmesh )
+        if random( 1, 4 ) != 1 then return end
+
+        local state = self:GetState()
+        if state != "Idle" and state != "FindTarget" then return end
+
+        local rndFriend; for _, v in RandomPairs( self.l_friends ) do rndFriend = v break end
+        if !IsValid( rndFriend ) then return end
+
+        local friendPos = ( rndFriend:GetPos() + VectorRand( -500, 500 ) )
+        local nearArea = ( onNavmesh and navmesh.GetNearestNavArea( friendPos ) )
+        local movePos = ( IsValid( nearArea ) and nearArea:GetClosestPointOnArea( friendPos ) or friendPos )
+
+        self:RecomputePath( friendPos )
+    end
+    
+    -- Prevent taking damage from our friends
+    local function OnLambdaInjured( self, dmginfo )
+        if self:IsFriendsWith( dmginfo:GetAttacker() ) then return true end
+    end
+
+    -- Defend our friends if we see the attacker or become friends with attacker that's enemy is the same as ours
+    local function OnLambdaOtherInjured( self, victim, dmginfo, tookDamage )
+        if !tookDamage then return end
+
+        local attacker = dmginfo:GetAttacker()
+        if attacker == self or !LambdaIsValid( attacker ) then return end
+
+        local ene = self:GetEnemy()
+        if !LambdaIsValid( self:GetEnemy() ) then
+            if self:IsFriendsWith( victim ) and self:CanTarget( attacker ) and self:CanSee( attacker ) then
+                self:AttackTarget( attacker ) 
+            elseif self:IsFriendsWith( attacker ) and self:CanTarget( victim ) and self:CanSee( victim ) then 
+                self:AttackTarget( victim ) 
+            end
+        elseif victim == ene and random( 1, 10 ) == 1 then
+            self:AddFriend( attacker )
+        end
+    end
+
+    -- Don't target our friends
+    local function OnLambdaCanTarget( self, target ) -- Do not attack friends
+        if self:IsFriendsWith( target ) then return true end
+    end
+    
+    local healEntities = {
+        [ "item_healthkit" ] = true,
+        [ "item_healthvial" ] = true,
+        [ "item_battery" ] = true,
+        [ "sent_ball" ] = true
+    }
+
+    -- Become friends with someone who just healed us
+    local function OnLambdaPickupEnt( self, ent )
+        if random( 1, 20 ) != 1 or !healEntities[ ent:GetClass() ] or ( CurTime() - ent:GetCreationTime() ) >= 5 then return end
+
+        local creator = ent:GetCreator()
+        if creator == self or !IsValid( creator ) then return end
+
+        self:AddFriend( creator )
+    end
+
+    -- Remove ourselves from our friends's friend list
+    local function OnLambdaRemoved( self )
+        for _, friend in pairs( self.l_friends ) do
             self:RemoveFriend( friend )
         end
     end
+    
+    hook.Add( "LambdaOnProfileApplied", modulePrefix .. "HandleProfiles", HandleProfiles )
+    hook.Add( "LambdaOnInitialize", modulePrefix .. "OnLambdaInitialized", OnLambdaInitialized )
+    hook.Add( "LambdaOnThink", modulePrefix .. "OnLambdaThink", OnLambdaThink )
+    hook.Add( "LambdaOnBeginMove", modulePrefix .. "OnLambdaBeginMove", OnLambdaBeginMove )
+    hook.Add( "LambdaOnInjured", modulePrefix .. "OnLambdaInjured", OnLambdaInjured )
+    hook.Add( "LambdaOnOtherInjured", modulePrefix .. "OnLambdaOtherInjured", OnLambdaOtherInjured )
+    hook.Add( "LambdaCanTarget", modulePrefix .. "OnLambdaCanTarget", OnLambdaCanTarget )
+    hook.Add( "LambdaOnPickupEnt", modulePrefix .. "OnLambdaPickupEnt", OnLambdaPickupEnt )
+    hook.Add( "LambdaOnRemove", modulePrefix .. "OnLambdaRemoved", OnLambdaRemoved )
 
-    local function CanTarget( self, target ) -- Do not attack friends
-        if self:IsFriendsWith( target ) then return true end
+    -- Players don't take damage from Lambda friends
+    local function OnEntityTakeDamage( ent, dmginfo )
+        if !ent:IsPlayer() then return end
+        local attacker = dmginfo:GetAttacker()
+        if attacker.IsLambdaPlayer and attacker:IsFriendsWith( ent ) then return true end
     end
 
-    local function EntityTakeDamage( ent, info )
-        local attacker = info:GetAttacker()
-        if ent:IsPlayer() and attacker.IsLambdaPlayer then
-            if attacker:IsFriendsWith( ent ) then return true end
-        end
-    end
+    hook.Add( "EntityTakeDamage", modulePrefix .. "OnEntityTakeDamage", OnEntityTakeDamage )
 
-    hook.Add("EntityTakeDamage", "lambdafriendsystemtakedamage", EntityTakeDamage )
-    hook.Add( "LambdaOnRemove", "lambdafriendsystemOnRemove", OnRemove )
-    hook.Add( "LambdaCanTarget", "lambdafriendsystemtarget",  CanTarget )
+end
 
-elseif CLIENT then
+if ( CLIENT ) then
+
+    local LocalPlayer = LocalPlayer
     local AddHalo = halo.Add
     local clientcolor = Color( 255, 145, 0 )
     local tracetable = {}
     local Trace = util.TraceLine
     local DrawText = draw.DrawText
+    local CreateFont = surface.CreateFont
+    local table_IsEmpty = table.IsEmpty
+    local uiscale = GetConVar( "lambdaplayers_uiscale" )
+    local ScrW = ScrW
+    local ScrH = ScrH
     local uiscale = GetConVar( "lambdaplayers_uiscale" )
 
     local function UpdateFont()
-        surface.CreateFont( "lambdaplayers_friendfont", {
+        CreateFont( "lambdaplayers_friendfont", {
             font = "ChatFont",
             size = LambdaScreenScale( 7 + uiscale:GetFloat() ),
             weight = 0,
@@ -283,84 +298,94 @@ elseif CLIENT then
     cvars.AddChangeCallback( "lambdaplayers_uiscale", UpdateFont, "lambdafriendsystemfonts" )
 
     -- Draw the outlines
-    hook.Add( "PreDrawHalos", "lambdafriendsystemhalos", function()
-        if !GetConVar( "lambdaplayers_friend_drawhalo" ):GetBool() then return end
+    local function OnPreDrawHalos()
         local friends = LocalPlayer().l_friends
-        if friends then
-            for k, v in pairs( friends ) do
-                if !LambdaIsValid( v ) or !v:IsBeingDrawn() then continue end
-                AddHalo( { v }, v:GetDisplayColor(), 3, 3, 1, true, false )
-            end
+        if !friends or !drawHalo:GetBool() then return end
+
+        for _, v in pairs( friends ) do
+            if !LambdaIsValid( v ) or !v:IsBeingDrawn() then continue end
+            AddHalo( { v }, v:GetDisplayColor(), 3, 3, 1, true, false )
         end
-    end )
+    end
 
     -- Display Friend tag and who the Lambda is friends with
-    hook.Add( "HUDPaint", "lambdafriendsystemhud", function()
-        local friends = LocalPlayer().l_friends
-
+    local function OnHUDPaint()
+        local ply = LocalPlayer()
+        local friends = ply.l_friends
+        
         if friends then
-            
-            for k, v in pairs( friends ) do
+            tracetable.start = ply:EyePos()
+            tracetable.filter = ply
+
+            for _, v in pairs( friends ) do
                 if !LambdaIsValid( v ) or !v:IsBeingDrawn() then continue end
-
-                tracetable.start = LocalPlayer():EyePos()
                 tracetable.endpos = v:WorldSpaceCenter()
-                tracetable.filter = LocalPlayer()
+
                 local result = Trace( tracetable )
+                if result.Entity != v and result.Fraction != 1 then continue end
 
-                if result.Entity != v then continue end
-                local vectoscreen = ( v:GetPos() + v:OBBCenter() * 2.5 ):ToScreen()
-                if !vectoscreen.visible then continue end
+                local toScreen = ( v:GetPos() + v:OBBCenter() * 2.5 ):ToScreen()
+                if !toScreen.visible then continue end
 
-                DrawText( "Friend", "lambdaplayers_friendfont", vectoscreen.x, vectoscreen.y, v:GetDisplayColor(), TEXT_ALIGN_CENTER )
+                DrawText( "Friend", "lambdaplayers_friendfont", toScreen.x, toScreen.y, v:GetDisplayColor(), TEXT_ALIGN_CENTER )
             end
-
         end
 
-
-        local sw, sh = ScrW(), ScrH()
-        local traceent = LocalPlayer():GetEyeTrace().Entity
-
+        local traceent = ply:GetEyeTrace().Entity
         if LambdaIsValid( traceent ) and traceent.IsLambdaPlayer then
-            local name = traceent:GetLambdaName()
-            local buildstring = "Friends With: "
-            local friends = traceent.l_friends
+            local lambdaFriends = traceent.l_friends
+            if lambdaFriends and !table_IsEmpty( lambdaFriends ) then
+                local buildString = "Friends With: "
+                local friendCount = table_Count( lambdaFriends )
+                local friendsCounted = 0
+                local otherCount = 0
+                
+                local lambdaFriends = traceent.l_friends
+                for k, v in pairs( lambdaFriends ) do
+                    if !IsValid( v ) then lambdaFriends[ k ] = nil continue end
 
-            if friends and !table_IsEmpty( friends ) then
-                local count = 0
-                local others = 0
-                for k, v in pairs( friends ) do
-                    if !IsValid( v ) then friends[ k ] = nil continue end 
-                    count = count + 1
+                    friendsCounted = ( friendsCounted + 1 )
+                    if friendsCounted > 3 then otherCount = otherCount + 1 continue end
 
-                    if count > 3 then others = others + 1 continue end
-
-                    buildstring = buildstring .. v:Nick() .. ( table_Count( friends ) > count and ", " or "" )
+                    buildString = ( buildString .. v:Nick() .. ( friendCount > friendsCounted and ", " or " " ) )
                 end
-                buildstring = others > 0 and buildstring .. " and " .. ( others ) .. ( others > 1 and " others" or " other") or buildstring
-                DrawText( buildstring, "lambdaplayers_displayname", ( sw / 2 ), ( sh / 1.77 ) + LambdaScreenScale( 1 + uiscale:GetFloat() ), traceent:GetDisplayColor(), TEXT_ALIGN_CENTER)
+                buildString = ( otherCount > 0 and buildString .. "and " .. ( otherCount ) .. ( otherCount > 1 and " others" or " other" ) or buildString )
+
+                local sw, sh = ScrW(), ScrH()
+                local name = traceent:GetLambdaName()
+                DrawText( buildString, "lambdaplayers_displayname", ( sw / 2 ), ( sh / 1.77 ) + LambdaScreenScale( 1 + uiscale:GetFloat() ), traceent:GetDisplayColor(), TEXT_ALIGN_CENTER )
             end
         end
+    end
 
-    end )
+    hook.Add( "PreDrawHalos", modulePrefix .. "OnPreDrawHalos", OnPreDrawHalos )
+    hook.Add( "HUDPaint", modulePrefix .. "OnHUDPaint", OnHUDPaint )
 
     net.Receive( "lambdaplayerfriendsystem_addfriend", function() 
-        local id = net.ReadUInt( 32 )
-        local lambda = net.ReadEntity()
-        local receiver = net.ReadEntity()
-        receiver.l_friends = receiver.l_friends or {}
+        local target = net.ReadEntity()
+        if !IsValid( target ) then return end 
+        
+        local friend = net.ReadEntity()
+        if !IsValid( friend ) then return end
 
-        if !receiver.l_friends then return end
-        receiver.l_friends[ id ] = lambda
+        target.l_friends = ( target.l_friends or {} )
+        target.l_friends[ net.ReadUInt( 32 ) ] = friend
+
+        friend.l_friends = ( friend.l_friends or {} )
+        friend.l_friends[ net.ReadUInt( 32 ) ] = target
     end )
 
     net.Receive( "lambdaplayerfriendsystem_removefriend", function() 
-        local id = net.ReadUInt( 32 )
-        local receiver = net.ReadEntity()
+        local target = net.ReadEntity()
+        local friend = net.ReadEntity()
+        local targetID = net.ReadUInt( 32 )
+        local friendID = net.ReadUInt( 32 )
 
-        if !receiver.l_friends then return end
-        receiver.l_friends[ id ] = nil
+        if IsValid( target ) and target.l_friends then
+            target.l_friends[ friendID ] = nil
+        end
+        if IsValid( friend ) and friend.l_friends then
+            friend.l_friends[ targetID ] = nil
+        end
     end )
-
-    
 end
