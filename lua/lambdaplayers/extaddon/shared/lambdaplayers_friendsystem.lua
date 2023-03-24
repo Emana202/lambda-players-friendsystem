@@ -5,13 +5,14 @@ local table_Count = table.Count
 local modulePrefix = "LambdaFriends_"
 
 -- Friend System Convars
-local friendsEnabled    = CreateLambdaConvar( "lambdaplayers_friend_enabled", 1, true, false, false, "Enables the friend system that will allow Lambda Players to be friends with each other or with players and treat them as such", 0, 1, { name = "Enable Friend System", type = "Bool", category = "Friend System" } )
-local drawHalo          = CreateLambdaConvar( "lambdaplayers_friend_drawhalo", 1, true, true, false, "If friends should have a halo around them", 0, 1, { name = "Draw Halos", type = "Bool", category = "Friend System" } )
-local friendCount       = CreateLambdaConvar( "lambdaplayers_friend_friendcount", 3, true, false, false, "How many friends a Lambda/Real Player can have", 1, 30, { name = "Friend Count", type = "Slider", decimals = 0, category = "Friend System" } )
-local friendChance      = CreateLambdaConvar( "lambdaplayers_friend_friendchance", 5, true, false, false, "The chance a Lambda Player will spawn as someone's friend", 1, 100, { name = "Friend Chance", type = "Slider", decimals = 0, category = "Friend System" } )
+local friendsEnabled        = CreateLambdaConvar( "lambdaplayers_friend_enabled", 1, true, false, false, "Enables the friend system that will allow Lambda Players to be friends with each other or with players and treat them as such", 0, 1, { name = "Enable Friend System", type = "Bool", category = "Friend System" } )
+local drawHalo              = CreateLambdaConvar( "lambdaplayers_friend_drawhalo", 1, true, true, false, "If friends should have a halo around them", 0, 1, { name = "Draw Halos", type = "Bool", category = "Friend System" } )
+local friendCount           = CreateLambdaConvar( "lambdaplayers_friend_friendcount", 3, true, false, false, "How many friends a Lambda/Real Player can have", 1, 30, { name = "Friend Count", type = "Slider", decimals = 0, category = "Friend System" } )
+local friendChance          = CreateLambdaConvar( "lambdaplayers_friend_friendchance", 5, true, false, false, "The chance a Lambda Player will spawn as someone's friend", 0, 100, { name = "Friend Chance", type = "Slider", decimals = 0, category = "Friend System" } )
+local friendFriendlyfire    = CreateLambdaConvar( "lambdaplayers_friend_friendlyfire", 0, true, false, false, "If friends are allowed to deal damage to each other", 0, 1, { name = "Friendly Fire", type = "Bool", category = "Friend System" } )
 
 -- Game Convars
-local ignorePlys        = GetConVar( "ai_ignoreplayers" )
+local ignorePlys            = GetConVar( "ai_ignoreplayers" )
 
 -- Permanent Friend Profile Setting
 LambdaCreateProfileSetting( "DTextEntry", "l_permafriends", "Friend System", function( pnl, parent )
@@ -48,7 +49,13 @@ if ( SERVER ) then
 
     -- If Lambda can become friends with that entity
     local function LambdaCanBeFriendsWith( lambda, ent )
-        if !ent.IsLambdaPlayer and ( !ent:IsPlayer() or ignorePlys:GetBool() ) then return false end
+        if !ent.IsLambdaPlayer and !ent:IsPlayer() then return false end
+        if ent.IsLambdaPlayer then 
+            if lambda:InCombat() and lambda:GetEnemy() == ent or ent:InCombat() and ent:GetEnemy() == lambda then return false end
+            if LambdaTeams and LambdaTeams:AreTeammates( lambda, ent ) == false then return false end
+        end
+        if ent:IsPlayer() and ignorePlys:GetBool() then return false end
+
         local friendTbl = ent.l_friends
         local friendLimit = friendCount:GetInt()
         return ( table_Count( lambda.l_friends ) < friendLimit and ( !friendTbl or table_Count( friendTbl ) < friendLimit ) )
@@ -117,14 +124,16 @@ if ( SERVER ) then
         self.RemoveFriend = LambdaRemoveFriend
 
         -- Randomly set someone as our friend if it passes the chance
-        if random( 0, 100 ) < friendChance:GetInt() then
-            local allPlys = table_Add( GetLambdaPlayers(), player_GetAll() )
-            for _, v in RandomPairs( allPlys ) do
-                if v != self and self:CanBeFriendsWith( v ) then
-                    self:AddFriend( v )
-                    break
+        if random( 1, 100 ) <= friendChance:GetInt() then
+            self:SimpleTimer( 0.1, function()
+                local allPlys = table_Add( GetLambdaPlayers(), player_GetAll() )
+                for _, v in RandomPairs( allPlys ) do
+                    if v != self and self:CanBeFriendsWith( v ) then
+                        self:AddFriend( v )
+                        break
+                    end
                 end
-            end
+            end, true )
         end
     end
 
@@ -199,7 +208,7 @@ if ( SERVER ) then
     
     -- Prevent taking damage from our friends
     local function OnLambdaInjured( self, dmginfo )
-        if self:IsFriendsWith( dmginfo:GetAttacker() ) then return true end
+        if self:IsFriendsWith( dmginfo:GetAttacker() ) and !friendFriendlyfire:GetBool() then return true end
     end
 
     -- Defend our friends if we see the attacker or become friends with attacker that's enemy is the same as ours
@@ -216,7 +225,7 @@ if ( SERVER ) then
             elseif self:IsFriendsWith( attacker ) and self:CanTarget( victim ) and self:CanSee( victim ) then 
                 self:AttackTarget( victim ) 
             end
-        elseif victim == ene and random( 1, 10 ) == 1 then
+        elseif victim == ene and victim != attacker and random( 1, 30 ) == 1 then
             self:AddFriend( attacker )
         end
     end
@@ -264,7 +273,7 @@ if ( SERVER ) then
     local function OnEntityTakeDamage( ent, dmginfo )
         if !ent:IsPlayer() then return end
         local attacker = dmginfo:GetAttacker()
-        if attacker.IsLambdaPlayer and attacker:IsFriendsWith( ent ) then return true end
+        if attacker.IsLambdaPlayer and attacker:IsFriendsWith( ent ) and !friendFriendlyfire:GetBool() then return true end
     end
 
     hook.Add( "EntityTakeDamage", modulePrefix .. "OnEntityTakeDamage", OnEntityTakeDamage )
